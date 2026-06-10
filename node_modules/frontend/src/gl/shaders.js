@@ -5,7 +5,7 @@ export const LANE_VERTEX_SHADER = `
   attribute float a_distance;
 
   uniform mat3 u_viewMatrix;
-  uniform float u_pixelRatio;
+  uniform mediump float u_pixelRatio;
   uniform float u_lineWidth;
 
   varying float v_side;
@@ -29,7 +29,7 @@ export const LANE_FRAGMENT_SHADER = `
   precision mediump float;
 
   uniform vec4 u_color;
-  uniform float u_pixelRatio;
+  uniform mediump float u_pixelRatio;
   uniform float u_lineWidth;
   uniform float u_antialias;
 
@@ -62,7 +62,7 @@ export const REFERENCE_LINE_VERTEX_SHADER = `
   attribute float a_side;
 
   uniform mat3 u_viewMatrix;
-  uniform float u_pixelRatio;
+  uniform mediump float u_pixelRatio;
   uniform float u_lineWidth;
 
   varying float v_side;
@@ -82,7 +82,7 @@ export const REFERENCE_LINE_FRAGMENT_SHADER = `
   precision mediump float;
 
   uniform vec4 u_color;
-  uniform float u_pixelRatio;
+  uniform mediump float u_pixelRatio;
   uniform float u_lineWidth;
 
   varying float v_side;
