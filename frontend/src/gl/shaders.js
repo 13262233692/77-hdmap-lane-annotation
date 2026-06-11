@@ -160,3 +160,61 @@ export const FILL_FRAGMENT_SHADER = `
     gl_FragColor = u_color;
   }
 `;
+
+export const CENTER_LINE_VERTEX_SHADER = `
+  attribute vec2 a_position;
+  attribute vec2 a_normal;
+  attribute float a_side;
+  attribute float a_distance;
+
+  uniform mat3 u_viewMatrix;
+  uniform mediump float u_pixelRatio;
+  uniform mediump float u_lineWidth;
+
+  varying float v_side;
+  varying float v_distance;
+
+  void main() {
+    float expand = u_lineWidth * 0.5 * u_pixelRatio;
+    vec2 pos = a_position + a_normal * expand * a_side;
+
+    vec3 transformed = u_viewMatrix * vec3(pos, 1.0);
+    gl_Position = vec4(transformed.xy, 0.0, 1.0);
+
+    v_side = a_side;
+    v_distance = a_distance;
+  }
+`;
+
+export const CENTER_LINE_FRAGMENT_SHADER = `
+  precision mediump float;
+
+  uniform vec4 u_color;
+  uniform mediump float u_pixelRatio;
+  uniform mediump float u_lineWidth;
+  uniform mediump float u_dashLength;
+  uniform mediump float u_gapLength;
+
+  varying float v_side;
+  varying float v_distance;
+
+  void main() {
+    float halfWidth = u_lineWidth * 0.5 * u_pixelRatio;
+    float aaWidth = max(1.0, u_pixelRatio);
+
+    float dist = abs(v_side) * halfWidth;
+    float edgeAlpha = 1.0 - smoothstep(halfWidth - aaWidth, halfWidth + aaWidth, dist);
+
+    float pattern = u_dashLength + u_gapLength;
+    float modDist = mod(v_distance, pattern);
+    float dashAlpha = step(modDist, u_dashLength);
+
+    float alpha = edgeAlpha * dashAlpha;
+
+    vec4 finalColor = u_color;
+    finalColor.a = finalColor.a * alpha;
+
+    if (finalColor.a < 0.01) discard;
+    gl_FragColor = finalColor;
+  }
+`;

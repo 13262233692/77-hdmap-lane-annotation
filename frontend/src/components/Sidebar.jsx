@@ -14,7 +14,8 @@ const Sidebar = memo(function Sidebar() {
   const setSelectedMap = useMapStore((state) => state.setSelectedMap);
   const setMaps = useMapStore((state) => state.setMaps);
 
-  const stats = useUIStore((state) => state.stats);
+  const rawStats = useUIStore((state) => state.stats);
+  const stats = rawStats || {};
 
   const handleSelectMap = useCallback((m) => {
     setSelectedMap(m);
@@ -63,24 +64,24 @@ const Sidebar = memo(function Sidebar() {
         <h2>统计信息</h2>
         <div className="stats-row">
           <span className="label">道路数</span>
-          <span className="value">{stats.roads}</span>
+          <span className="value">{stats.roads ?? 0}</span>
         </div>
         <div className="stats-row">
           <span className="label">车道数</span>
-          <span className="value">{stats.lanes}</span>
+          <span className="value">{stats.lanes ?? stats.laneCount ?? 0}</span>
         </div>
         <div className="stats-row">
           <span className="label">顶点数</span>
-          <span className="value">{stats.vertices.toLocaleString()}</span>
+          <span className="value">{(stats.vertices ?? stats.vertexCount ?? 0).toLocaleString()}</span>
         </div>
         <div className="stats-row">
           <span className="label">三角面</span>
-          <span className="value">{stats.triangles.toLocaleString()}</span>
+          <span className="value">{(stats.triangles ?? stats.triangleCount ?? 0).toLocaleString()}</span>
         </div>
         <div className="stats-row">
           <span className="label">FPS</span>
-          <span className="value" style={{ color: stats.fps < 30 ? '#e94560' : '#64ffda' }}>
-            {stats.fps.toFixed(0)}
+          <span className="value" style={{ color: (stats.fps ?? 60) < 30 ? '#e94560' : '#64ffda' }}>
+            {(stats.fps ?? 0).toFixed(0)}
           </span>
         </div>
       </div>
@@ -94,6 +95,10 @@ const Sidebar = memo(function Sidebar() {
         <div className="legend-item">
           <span className="legend-color" style={{ background: 'rgba(204,51,51,0.6)' }} />
           <span>参考线 (Reference Line)</span>
+        </div>
+        <div className="legend-item">
+          <span className="legend-color" style={{ background: 'rgba(51,230,102,0.9)', borderStyle: 'dashed', border: '1px dashed rgba(51,230,102,0.9)' }} />
+          <span>车道中心线 (自动推演)</span>
         </div>
         <div className="legend-item">
           <span className="legend-color" style={{ background: 'rgba(0,150,255,0.9)' }} />

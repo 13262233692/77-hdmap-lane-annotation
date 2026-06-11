@@ -2,7 +2,8 @@ import {
   LANE_VERTEX_SHADER, LANE_FRAGMENT_SHADER,
   REFERENCE_LINE_VERTEX_SHADER, REFERENCE_LINE_FRAGMENT_SHADER,
   GRID_VERTEX_SHADER, GRID_FRAGMENT_SHADER,
-  FILL_VERTEX_SHADER, FILL_FRAGMENT_SHADER
+  FILL_VERTEX_SHADER, FILL_FRAGMENT_SHADER,
+  CENTER_LINE_VERTEX_SHADER, CENTER_LINE_FRAGMENT_SHADER
 } from './shaders.js';
 
 function createShader(gl, type, source) {
@@ -96,6 +97,7 @@ export class WebGLRenderer {
     this.gridProgram = createProgram(gl, GRID_VERTEX_SHADER, GRID_FRAGMENT_SHADER);
     this.fillProgram = createProgram(gl, FILL_VERTEX_SHADER, FILL_FRAGMENT_SHADER);
     this.controlPointProgram = createProgram(gl, CONTROL_POINT_SHADER_VS, CONTROL_POINT_SHADER_FS);
+    this.centerLineProgram = createProgram(gl, CENTER_LINE_VERTEX_SHADER, CENTER_LINE_FRAGMENT_SHADER);
 
     this.viewMatrix = [1, 0, 0, 0, 1, 0, 0, 0, 1];
     this.zoom = 1.0;
@@ -106,6 +108,7 @@ export class WebGLRenderer {
     this.laneMeshes = [];
     this.refLineMeshes = [];
     this.fillMeshes = [];
+    this.centerLineMeshes = [];
     this.gridMesh = null;
     this.controlPointMesh = null;
 
@@ -447,13 +450,94 @@ export class WebGLRenderer {
     };
   }
 
+  buildCenterLineMesh(samples) {
+    if (!samples || samples.length < 2) return null;
+
+    const positions = new Float32Array(samples.length * 4);
+    const normals = new Float32Array(samples.length * 4);
+    const sides = new Float32Array(samples.length * 2);
+    const distances = new Float32Array(samples.length * 2);
+    const indices = [];
+
+    let totalLength = 0;
+    const accumulatedDist = [];
+    accumulatedDist.push(0);
+    for (let i = 1; i < samples.length; i++) {
+      const dx = samples[i].x - samples[i - 1].x;
+      const dy = samples[i].y - samples[i - 1].y;
+      totalLength += Math.sqrt(dx * dx + dy * dy);
+      accumulatedDist.push(totalLength);
+    }
+
+    for (let i = 0; i < samples.length; i++) {
+      const s = samples[i];
+      const nx = -Math.sin(s.hdg);
+      const ny = Math.cos(s.hdg);
+
+      const base = i * 4;
+      positions[base] = s.x;
+      positions[base + 1] = s.y;
+      positions[base + 2] = s.x;
+      positions[base + 3] = s.y;
+
+      normals[base] = nx;
+      normals[base + 1] = ny;
+      normals[base + 2] = nx;
+      normals[base + 3] = ny;
+
+      const sBase = i * 2;
+      sides[sBase] = -1;
+      sides[sBase + 1] = 1;
+
+      distances[sBase] = accumulatedDist[i];
+      distances[sBase + 1] = accumulatedDist[i];
+    }
+
+    for (let i = 0; i < samples.length - 1; i++) {
+      const base = i * 2;
+      indices.push(base, base + 1, base + 2);
+      indices.push(base + 1, base + 3, base + 2);
+    }
+
+    const { gl } = this;
+    return {
+      positionBuffer: createBuffer(gl, positions, gl.DYNAMIC_DRAW),
+      normalBuffer: createBuffer(gl, normals, gl.DYNAMIC_DRAW),
+      sideBuffer: createBuffer(gl, sides, gl.STATIC_DRAW),
+      distanceBuffer: createBuffer(gl, distances, gl.DYNAMIC_DRAW),
+      indexBuffer: createIndexBuffer(gl, indices, gl.STATIC_DRAW),
+      positions,
+      normals,
+      distances,
+      indexCount: indices.length,
+      vertexCount: samples.length * 2
+    };
+  }
+
+  updateCenterLine(centerLineMeshesData) {
+    const { gl } = this;
+    this.centerLineMeshes.forEach(this._disposeMesh.bind(this));
+    this.centerLineMeshes = [];
+
+    for (const data of centerLineMeshesData) {
+      const mesh = this.buildCenterLineMesh(data.fittedSamples);
+      if (mesh) {
+        mesh.laneIdx = data.laneIdx;
+        mesh.fittedPoly = data.fittedPoly;
+        this.centerLineMeshes.push(mesh);
+      }
+    }
+  }
+
   setMapData(roads, laneDataMap) {
     this.laneMeshes.forEach(this._disposeMesh.bind(this));
     this.refLineMeshes.forEach(this._disposeMesh.bind(this));
     this.fillMeshes.forEach(this._disposeMesh.bind(this));
+    this.centerLineMeshes.forEach(this._disposeMesh.bind(this));
     this.laneMeshes = [];
     this.refLineMeshes = [];
     this.fillMeshes = [];
+    this.centerLineMeshes = [];
 
     let totalVerts = 0;
     let totalTris = 0;
@@ -566,6 +650,7 @@ export class WebGLRenderer {
     this._renderFills();
     this._renderRefLines();
     this._renderLanes();
+    this._renderCenterLines();
     this._renderControlPoints();
     this._updateFPS();
   }
@@ -714,6 +799,54 @@ export class WebGLRenderer {
     }
   }
 
+  _renderCenterLines() {
+    const { gl, centerLineProgram, centerLineMeshes, viewMatrix, pixelRatio } = this;
+    if (centerLineMeshes.length === 0) return;
+
+    gl.useProgram(centerLineProgram);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    const aPosition = gl.getAttribLocation(centerLineProgram, 'a_position');
+    const aNormal = gl.getAttribLocation(centerLineProgram, 'a_normal');
+    const aSide = gl.getAttribLocation(centerLineProgram, 'a_side');
+    const aDistance = gl.getAttribLocation(centerLineProgram, 'a_distance');
+    const uViewMatrix = gl.getUniformLocation(centerLineProgram, 'u_viewMatrix');
+    const uPixelRatio = gl.getUniformLocation(centerLineProgram, 'u_pixelRatio');
+    const uLineWidth = gl.getUniformLocation(centerLineProgram, 'u_lineWidth');
+    const uColor = gl.getUniformLocation(centerLineProgram, 'u_color');
+    const uDashLength = gl.getUniformLocation(centerLineProgram, 'u_dashLength');
+    const uGapLength = gl.getUniformLocation(centerLineProgram, 'u_gapLength');
+
+    gl.uniformMatrix3fv(uViewMatrix, false, viewMatrix);
+    gl.uniform1f(uPixelRatio, pixelRatio);
+    gl.uniform1f(uLineWidth, 2.5);
+    gl.uniform4f(uColor, 0.2, 0.9, 0.3, 0.9);
+    gl.uniform1f(uDashLength, 1.5 / this.zoom);
+    gl.uniform1f(uGapLength, 1.0 / this.zoom);
+
+    for (const mesh of centerLineMeshes) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, mesh.positionBuffer);
+      gl.enableVertexAttribArray(aPosition);
+      gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, mesh.normalBuffer);
+      gl.enableVertexAttribArray(aNormal);
+      gl.vertexAttribPointer(aNormal, 2, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, mesh.sideBuffer);
+      gl.enableVertexAttribArray(aSide);
+      gl.vertexAttribPointer(aSide, 1, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, mesh.distanceBuffer);
+      gl.enableVertexAttribArray(aDistance);
+      gl.vertexAttribPointer(aDistance, 1, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.indexBuffer);
+      gl.drawElements(gl.TRIANGLES, mesh.indexCount, gl.UNSIGNED_INT, 0);
+    }
+  }
+
   _renderControlPoints() {
     const { gl, controlPointProgram, controlPointMesh, viewMatrix, pixelRatio } = this;
     if (!controlPointMesh || controlPointMesh.count === 0) return;
@@ -740,6 +873,7 @@ export class WebGLRenderer {
     this.laneMeshes.forEach(this._disposeMesh.bind(this));
     this.refLineMeshes.forEach(this._disposeMesh.bind(this));
     this.fillMeshes.forEach(this._disposeMesh.bind(this));
+    this.centerLineMeshes.forEach(this._disposeMesh.bind(this));
     this._disposeMesh(this.gridMesh);
     if (this.controlPointMesh) {
       if (this.controlPointMesh.positionBuffer) gl.deleteBuffer(this.controlPointMesh.positionBuffer);
@@ -750,5 +884,6 @@ export class WebGLRenderer {
     if (this.gridProgram) gl.deleteProgram(this.gridProgram);
     if (this.fillProgram) gl.deleteProgram(this.fillProgram);
     if (this.controlPointProgram) gl.deleteProgram(this.controlPointProgram);
+    if (this.centerLineProgram) gl.deleteProgram(this.centerLineProgram);
   }
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { WebGLRenderer } from './gl/WebGLRenderer.js';
 import { adaptiveSampleRoad, buildLaneBoundarySamples } from './math/adaptiveSampling.js';
+import { deriveAllCenterLines } from './math/centerLine.js';
 import { listMaps, sampleAllRoads, parseMap } from './services/api.js';
 import { useMapStore, useUIStore, useViewStore, useEditorStore } from './store';
 import Sidebar from './components/Sidebar.jsx';
@@ -48,6 +49,44 @@ export default function App() {
     controlPoints: [],
     pointToLaneMap: []
   });
+
+  const centerLineRecalcTimerRef = useRef(null);
+
+  const recalculateCenterLines = useCallback(() => {
+    const renderer = rendererRef.current;
+    if (!renderer) return;
+
+    const laneDataMap = laneDataMapRef.current;
+    if (!laneDataMap || Object.keys(laneDataMap).length === 0) return;
+
+    const centerLineResults = deriveAllCenterLines(laneDataMap);
+
+    const meshesData = [];
+    for (const roadId of Object.keys(centerLineResults)) {
+      for (const laneResult of centerLineResults[roadId]) {
+        if (laneResult.fittedSamples && laneResult.fittedSamples.length > 1) {
+          meshesData.push({
+            roadId,
+            laneIdx: laneResult.laneIdx,
+            laneId: laneResult.laneId,
+            fittedSamples: laneResult.fittedSamples,
+            fittedPoly: laneResult.fittedPoly
+          });
+        }
+      }
+    }
+    renderer.updateCenterLine(meshesData);
+  }, []);
+
+  const scheduleCenterLineRecalc = useCallback(() => {
+    if (centerLineRecalcTimerRef.current) {
+      clearTimeout(centerLineRecalcTimerRef.current);
+    }
+    centerLineRecalcTimerRef.current = setTimeout(() => {
+      recalculateCenterLines();
+      centerLineRecalcTimerRef.current = null;
+    }, 50);
+  }, [recalculateCenterLines]);
 
   useEffect(() => {
     listMaps().then(setMaps).catch(console.error);
@@ -258,6 +297,8 @@ export default function App() {
         const colors = cpData.controlPoints.map(() => [0.0, 0.9, 1.0, 0.85]);
         rendererRef.current.updateControlPoints(cpData.controlPoints, colors);
 
+        recalculateCenterLines();
+
         setStats({
           roads: parsed.roads.length,
           lanes: totalLanes,
@@ -275,7 +316,7 @@ export default function App() {
     };
 
     load();
-  }, [selectedMap, setLoading, setMapData, setView, setStats, generateControlPoints, clearSelection]);
+  }, [selectedMap, setLoading, setMapData, setView, setStats, generateControlPoints, clearSelection, recalculateCenterLines]);
 
   const handleMouseDown = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
@@ -332,6 +373,8 @@ export default function App() {
             boundary[pointIndex].y = world.y;
           }
         }
+
+        scheduleCenterLineRecalc();
       }
       return;
     }
@@ -349,11 +392,12 @@ export default function App() {
   const handleMouseUp = useCallback(() => {
     if (isDragging) {
       endDragging();
+      recalculateCenterLines();
     }
     if (isPanning) {
       endPanning();
     }
-  }, [isDragging, isPanning, endDragging, endPanning]);
+  }, [isDragging, isPanning, endDragging, endPanning, recalculateCenterLines]);
 
   const handleWheel = useCallback((e) => {
     e.preventDefault();
